@@ -1,3 +1,10 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
 <title>대외협력 업무 트래커</title>
 <style id="app-style">
 @import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap');
@@ -63,6 +70,7 @@
   .sync-ok{color:#7fe0b0;background:rgba(31,157,85,.16);}
   .sync-saving{color:#ffdf8a;background:rgba(185,131,5,.22);}
   .sync-local{color:#ffb3ae;background:rgba(208,52,44,.18);}
+  .acct{font-size:12px;color:#c7d2ea;font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
   /* ---------- 탭 ---------- */
   .tabbar{background:var(--navy-800);padding:0 28px;display:flex;gap:4px;border-bottom:1px solid var(--navy-700);}
@@ -226,12 +234,27 @@
 
 <script id="app-data" type="application/json">{"v":2,"categories":[],"tasks":[]}</script>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+
 <script id="app-script">
 (function(){
   "use strict";
 
   var STATUSES = ["예정","진행중","완료"];
   var PALETTE = ["#E1E8FA","#C0DAF4","#AFCCE5","#F8F0AA","#FFFFFF"];
+
+  var FIREBASE_CONFIG = {
+    apiKey: "AIzaSyBZ5WpWysBmbwDX8qUi2nf0WYrf1tl5Q-c",
+    authDomain: "work-progress-79c3f.firebaseapp.com",
+    databaseURL: "https://work-progress-79c3f-default-rtdb.firebaseio.com",
+    projectId: "work-progress-79c3f",
+    storageBucket: "work-progress-79c3f.firebasestorage.app",
+    messagingSenderId: "487059621752",
+    appId: "1:487059621752:web:eabf10b67306bd230f6a8d"
+  };
+  var fbDb=null, dataRef=null, currentUid=null;
 
   var BODY_HTML = [
     '<div class="topbar">',
@@ -241,6 +264,8 @@
       '</div>',
       '<div class="actions">',
         '<span class="sync sync-saving" id="syncState">연결 중...</span>',
+        '<span class="acct" id="acctLabel" style="display:none;"></span>',
+        '<button class="btn btn-ghost btn-sm" id="btnAuth">구글로 로그인</button>',
         '<button class="btn btn-ghost btn-sm" id="btnExport">백업 저장</button>',
         '<button class="btn btn-ghost btn-sm" id="btnImport">백업 불러오기</button>',
         '<input type="file" id="fileImportInput" accept="application/json">',
@@ -357,13 +382,18 @@
     var el=document.getElementById("syncState"); if(!el) return;
     if(state==="ok"){ el.textContent="클라우드 저장됨"; el.className="sync sync-ok"; }
     else if(state==="saving"){ el.textContent="저장 중..."; el.className="sync sync-saving"; }
-    else { el.textContent="이 기기에만 저장"; el.className="sync sync-local"; }
+    else { el.textContent="로그인해야 동기화"; el.className="sync sync-local"; }
   }
   function saveLocal(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }catch(e){} }
   function scheduleSave(){
     saveLocal();
-    if(artifactAPI){ setSync("saving"); clearTimeout(pubTimer); pubTimer=setTimeout(tryPublish,1200); }
+    if(currentUid && dataRef){ setSync("saving"); clearTimeout(pubTimer); pubTimer=setTimeout(pushRemote,600); }
     else { setSync("local"); }
+  }
+  function pushRemote(){
+    if(!dataRef){ return; }
+    setSync("saving");
+    dataRef.set(JSON.stringify(data)).then(function(){ setSync("ok"); }).catch(function(){ setSync("local"); });
   }
   function isTyping(){
     var a=document.activeElement;
@@ -629,6 +659,59 @@
     document.getElementById("view-mission").style.display = tab==="mission"?"":"none";
   }
 
+  /* ===== Firebase 로그인 / 자동 싱크 ===== */
+  function showAccount(user){
+    var a=document.getElementById("acctLabel"), b=document.getElementById("btnAuth");
+    if(a){ a.textContent=user.email||user.displayName||"로그인됨"; a.style.display=""; }
+    if(b){ b.textContent="로그아웃"; }
+  }
+  function showLoggedOut(){
+    var a=document.getElementById("acctLabel"), b=document.getElementById("btnAuth");
+    if(a){ a.style.display="none"; }
+    if(b){ b.textContent="구글로 로그인"; }
+    setSync("local");
+  }
+  function attachSync(uid){
+    if(!fbDb) return;
+    if(dataRef){ dataRef.off(); }
+    dataRef=fbDb.ref("users/"+uid+"/data");
+    dataRef.on("value", function(snap){
+      var s=snap.val();
+      if(s==null){
+        if(data.categories.length || data.tasks.length){ pushRemote(); } else { setSync("ok"); }
+        return;
+      }
+      var incoming;
+      try{ incoming=JSON.parse(s); }catch(e){ setSync("ok"); return; }
+      var nd=normalize(incoming);
+      if(JSON.stringify(nd)===JSON.stringify(data)){ setSync("ok"); return; }
+      data=nd; ensureOrder(); saveLocal(); render(); setSync("ok");
+    }, function(){ setSync("local"); });
+  }
+  function signIn(){
+    if(typeof firebase==="undefined"){ showToast("인터넷 연결을 확인해 주세요"); return; }
+    var provider=new firebase.auth.GoogleAuthProvider();
+    firebase.auth().signInWithPopup(provider).catch(function(err){
+      var c=err&&err.code;
+      if(c==="auth/popup-blocked"||c==="auth/operation-not-supported-in-this-environment"){
+        try{ firebase.auth().signInWithRedirect(provider); }catch(e){}
+      } else if(c==="auth/popup-closed-by-user"||c==="auth/cancelled-popup-request"){
+        /* 사용자가 창을 닫음 - 무시 */
+      } else { showToast("로그인에 실패했어요. 다시 시도해 주세요"); }
+    });
+  }
+  function signOutNow(){ if(typeof firebase!=="undefined"){ firebase.auth().signOut(); } }
+  function initFirebase(){
+    if(typeof firebase==="undefined"){ setSync("local"); return; }
+    try{ firebase.initializeApp(FIREBASE_CONFIG); }catch(e){}
+    fbDb=firebase.database();
+    firebase.auth().getRedirectResult().catch(function(){});
+    firebase.auth().onAuthStateChanged(function(user){
+      if(user){ currentUid=user.uid; showAccount(user); setSync("saving"); attachSync(user.uid); }
+      else { currentUid=null; if(dataRef){ dataRef.off(); dataRef=null; } showLoggedOut(); }
+    });
+  }
+
   function init(){
     document.getElementById("app-root").innerHTML=BODY_HTML;
     tabBtns=Array.prototype.slice.call(document.querySelectorAll(".tab"));
@@ -720,24 +803,12 @@
     document.getElementById("btnImport").addEventListener("click",function(){ fi.value=""; fi.click(); });
     fi.addEventListener("change",function(e){ handleImport(e.target.files[0]); });
 
+    document.getElementById("btnAuth").addEventListener("click", function(){ if(currentUid){ signOutNow(); } else { signIn(); } });
+
     loadData();
     render();
     setSync("local");
-    restoreUI();
-
-    if(window.claude && typeof window.claude.use==="function"){
-      window.claude.use("artifact").then(function(ns){
-        if(ns){
-          artifactAPI=ns; setSync("ok");
-          /* 클라우드가 비어 있는데 이 기기에 내용이 있으면 자동으로 클라우드에 올림 (한 번) */
-          if(embeddedEmptyOnLoad && (data.categories.length || data.tasks.length)){
-            setSync("saving");
-            setTimeout(tryPublish, 300);
-          }
-        } else { setSync("local"); }
-      }).catch(function(){ setSync("local"); });
-      window.claude.use("downloads").then(function(ns){ downloadsAPI=ns; }).catch(function(){});
-    }
+    initFirebase();
   }
 
   /* ===== 백업 ===== */
@@ -769,3 +840,6 @@
   else { init(); }
 })();
 </script>
+
+</body>
+</html>
