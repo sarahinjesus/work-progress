@@ -164,6 +164,7 @@
   .sub-del{color:#aeb6c6;font-size:15px;background:none;border:none;cursor:pointer;flex-shrink:0;line-height:1;padding:2px 5px;border-radius:6px;}
   .sub-del:hover{background:var(--red-bg);color:var(--red);}
   .subcat.collapsed .subcat-body{display:none;}
+  .subcat-empty{color:#b7bece;font-size:12px;padding:6px 4px 8px;}
   .sub-add{display:block;width:100%;margin:6px 0 4px;padding:6px 8px;border:1px dashed var(--border);border-radius:8px;font-size:12.5px;font-family:inherit;color:var(--text);background:transparent;}
   .sub-add::placeholder{color:var(--accent);opacity:.75;}
   .sub-add:focus{outline:none;background:#fff;border-style:solid;border-color:var(--accent);}
@@ -596,19 +597,22 @@
         if(!g.base){ html+='<button class="sub-del" data-cat="'+cat.id+'" data-sub="'+g.id+'" title="하위 카테고리 삭제">×</button>'; }
         html+='</div>';
         html+='<div class="subcat-body">';
+        if(gtasks.length===0){ html+='<div class="subcat-empty">아직 업무가 없어요</div>'; }
         gtasks.forEach(function(t){ html+=taskRowHtml(t, true); });
-        html+='<input class="sub-add" data-cat="'+cat.id+'" data-sub="'+g.id+'" placeholder="＋ 이 그룹에 업무 추가 후 Enter">';
         html+='</div>';
         html+='</div>';
       });
     }
     html+='</div>';
-    if(subs.length===0){
-      html+='<div class="add-row" data-cat="'+cat.id+'">';
-      html+='<div class="add-r1"><input class="add-title" data-cat="'+cat.id+'" placeholder="새 업무 내용을 입력하고 Enter"><button class="add-btn" data-cat="'+cat.id+'">＋ 추가</button></div>';
-      html+='<div class="add-r2">'+statusSelectHtml("add-status","예정")+'<input class="add-due" data-cat="'+cat.id+'" type="date"></div>';
-      html+='</div>';
+    html+='<div class="add-row" data-cat="'+cat.id+'">';
+    html+='<div class="add-r1"><input class="add-title" data-cat="'+cat.id+'" placeholder="새 업무 내용을 입력하고 Enter"><button class="add-btn" data-cat="'+cat.id+'">＋ 추가</button></div>';
+    html+='<div class="add-r2">';
+    if(subs.length>0){
+      var lastSub=lastAddSub[cat.id]||"";
+      html+='<select class="add-sub-select" data-cat="'+cat.id+'" title="추가할 그룹"><option value=""'+(lastSub===""?" selected":"")+'>기본</option>'+subs.map(function(s){ return '<option value="'+s.id+'"'+(lastSub===s.id?" selected":"")+'>'+escapeHtml(s.name)+'</option>'; }).join("")+'</select>';
     }
+    html+=statusSelectHtml("add-status","예정")+'<input class="add-due" data-cat="'+cat.id+'" type="date"></div>';
+    html+='</div>';
     html+='<div class="subcat-addbar" data-cat="'+cat.id+'"><input class="new-sub-input" data-cat="'+cat.id+'" placeholder="새 하위 카테고리 이름 (예: 준비, 홍보)"><button class="add-sub-btn" data-cat="'+cat.id+'">＋ 하위 추가</button></div>';
     html+='</div>';
     return html;
@@ -627,6 +631,7 @@
 
   /* ===== 하위 카테고리 ===== */
   var collapsed={};      /* cat.id+"::"+subId -> true (접힘, 이 기기에서만) */
+  var lastAddSub={};     /* cat.id -> 마지막으로 업무를 추가한 그룹(subId) */
   var focusSubAdd=null;  /* 렌더 후 이 하위그룹 추가칸에 포커스 {cat, sub} */
   var dragTaskId=null;
   function addSub(catId, name){
@@ -845,8 +850,13 @@
     if(!title){ showToast("업무 내용을 입력해 주세요"); titleEl.focus(); return; }
     var due=card.querySelector(".add-due").value;
     var status=card.querySelector(".add-status").value;
+    var subSel=card.querySelector(".add-sub-select");
+    var subId=subSel?subSel.value:"";
+    lastAddSub[catId]=subId;
     var maxo=-1; data.tasks.forEach(function(t){ if(t.catId===catId && typeof t.order==="number" && t.order>maxo) maxo=t.order; });
-    data.tasks.push({id:tid(),catId:catId,title:title,due:due,status:status,memo:"",order:maxo+1,createdAt:Date.now()});
+    var task={id:tid(),catId:catId,title:title,due:due,status:status,memo:"",order:maxo+1,createdAt:Date.now()};
+    if(subId) task.subId=subId;
+    data.tasks.push(task);
     scheduleSave(); focusAddCat=catId; render();
   }
 
@@ -984,7 +994,6 @@
       if(e.key!=="Enter") return;
       var el=e.target;
       if(el.classList.contains("add-title")){ addTask(el.getAttribute("data-cat"), el); }
-      else if(el.classList.contains("sub-add")){ addTaskToSub(el.getAttribute("data-cat"), el.getAttribute("data-sub"), el); }
       else if(el.classList.contains("new-sub-input")){ addSub(el.getAttribute("data-cat"), el.value); el.value=""; }
     }
     [document.getElementById("catContainer"), document.getElementById("catFocusBody")].forEach(function(container){
