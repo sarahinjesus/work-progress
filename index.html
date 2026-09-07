@@ -655,9 +655,11 @@
     focusSubAdd={cat:catId, sub:subId||""};
     scheduleSave(); render();
   }
-  function moveTaskToSub(taskId, subId){
+  function moveTaskToSub(taskId, catId, subId){
     var t=findTask(taskId); if(!t) return;
-    if((t.subId||"")===(subId||"")) return;
+    var sameCat=(!catId || catId===t.catId);
+    if(sameCat && (t.subId||"")===(subId||"")) return;
+    if(catId && catId!==t.catId) t.catId=catId;
     if(subId) t.subId=subId; else { delete t.subId; }
     var maxo=-1; data.tasks.forEach(function(x){ if(x.catId===t.catId && typeof x.order==="number" && x.order>maxo) maxo=x.order; });
     t.order=maxo+1;
@@ -665,6 +667,23 @@
   }
   function toggleCollapse(catId, subId){ var k=catId+"::"+subId; collapsed[k]=!collapsed[k]; render(); }
   function clearDropHovers(){ document.querySelectorAll(".subcat.drop-hover").forEach(function(s){ s.classList.remove("drop-hover"); }); }
+  function autoScrollDuringDrag(x,y){
+    var el=document.elementFromPoint(x,y);
+    var edge=54, sp=18;
+    var scroller=el?el.closest(".task-scroll"):null;
+    if(scroller && scroller.scrollHeight>scroller.clientHeight+2){
+      var r=scroller.getBoundingClientRect();
+      if(y<r.top+edge) scroller.scrollTop-=sp;
+      else if(y>r.bottom-edge) scroller.scrollTop+=sp;
+      return;
+    }
+    var fo=document.getElementById("catFocus");
+    if(fo && fo.classList.contains("show")){
+      if(y<edge) fo.scrollTop-=sp; else if(y>window.innerHeight-edge) fo.scrollTop+=sp;
+      return;
+    }
+    if(y<edge) window.scrollBy(0,-sp); else if(y>window.innerHeight-edge) window.scrollBy(0,sp);
+  }
   function renderCatFilter(activeCats){
     var sel=document.getElementById("catFilter");
     if(!sel) return;
@@ -984,11 +1003,14 @@
       });
       container.addEventListener("drop", function(e){
         var sub=e.target.closest&&e.target.closest(".subcat"); if(!sub||!dragTaskId) return;
-        e.preventDefault(); var target=sub.getAttribute("data-sub"), moving=dragTaskId;
-        dragTaskId=null; clearDropHovers(); moveTaskToSub(moving, target);
+        e.preventDefault(); var tcat=sub.getAttribute("data-cat"), tsub=sub.getAttribute("data-sub"), moving=dragTaskId;
+        dragTaskId=null; clearDropHovers(); moveTaskToSub(moving, tcat, tsub);
       });
       container.addEventListener("dragend", function(){ dragTaskId=null; clearDropHovers(); document.querySelectorAll(".trow.dragging").forEach(function(r){r.classList.remove("dragging");}); });
     });
+    /* 드래그 중 가장자리에서 자동 스크롤 */
+    document.addEventListener("dragover", function(e){ if(!dragTaskId) return; e.preventDefault(); autoScrollDuringDrag(e.clientX, e.clientY); });
+
     /* 확대 화면 닫기 */
     document.getElementById("catFocusClose").addEventListener("click", closeFocus);
     document.getElementById("catFocus").addEventListener("click", function(e){ if(e.target.id==="catFocus") closeFocus(); });
